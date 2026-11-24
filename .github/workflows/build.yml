@@ -2,6 +2,7 @@ name: Android alpha APK
 on: [push, workflow_dispatch]
 permissions:
   contents: read
+  actions: read
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,11 +24,34 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - run: gradle --no-daemon :app:assembleDebug
+      - run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
       - name: Prepare APK
         run: cp app/build/outputs/apk/debug/app-debug.apk POCKET_MANAGER_v0.2.0.apk
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: Pocket-Manager-alpha-APK
+          run-id: '45448251110'
+          github-token: ${{ github.token }}
+          path: old-apk
+      - name: Check previous signing certificate
+        run: |
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          "$SIGNER" verify --print-certs POCKET_MANAGER_v0.2.0.apk
+          if test -f old-apk/POCKET_MANAGER_v0.1.0.apk; then
+            "$SIGNER" verify --print-certs old-apk/POCKET_MANAGER_v0.1.0.apk
+            OLD=$("$SIGNER" verify --print-certs old-apk/POCKET_MANAGER_v0.1.0.apk | grep 'certificate SHA-256 digest:' | head -1)
+            NEW=$("$SIGNER" verify --print-certs POCKET_MANAGER_v0.2.0.apk | grep 'certificate SHA-256 digest:' | head -1)
+            if [ "$OLD" = "$NEW" ]; then echo 'SAME_SIGNER'; else echo 'DIFFERENT_SIGNER: use encrypted backup and parallel install'; fi
+          fi
+      - name: Build parallel migration APK
+        run: |
+          gradle --no-daemon -PparallelInstall=true :app:assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk POCKET_MANAGER_v0.2.0_MIGRATION.apk
       - uses: actions/upload-artifact@v4
         with:
           name: Pocket-Manager-v0.2.0-APK
-          path: POCKET_MANAGER_v0.2.0.apk
+          path: |
+            POCKET_MANAGER_v0.2.0.apk
+            POCKET_MANAGER_v0.2.0_MIGRATION.apk
           if-no-files-found: error
